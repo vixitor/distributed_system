@@ -22,6 +22,24 @@ type ExampleReply struct {
 	Y int
 }
 
+type RPCAgrs struct {
+	Pid int 
+}
+type RPCReply struct {
+	TaskType string 
+	TaskId int 
+	Filename string
+	NReduce int 
+}
+
+type CompleteArgs struct { 
+	TaskId int 
+	TaskType string 
+}
+
+type CompleteReply struct { 
+	
+}
 // Add your RPC definitions here.
 
 
