@@ -4,8 +4,8 @@ import (
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
 	"6.5840/tester1"
+	"time"
 )
-
 
 type Clerk struct {
 	clnt   *tester.Clnt
@@ -30,7 +30,18 @@ func MakeClerk(clnt *tester.Clnt, server string) kvtest.IKVClerk {
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	// You will have to modify this function.
-	return "", 0, rpc.ErrNoKey
+	reply := rpc.GetReply{}
+	for {
+		ck.clnt.Call(ck.server, "KVServer.Get", &rpc.GetArgs{Key: key}, &reply)
+		if reply == (rpc.GetReply{}) {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if reply.Err == rpc.OK || reply.Err == rpc.ErrNoKey {
+			break
+		}
+	}
+	return reply.Value, reply.Version, reply.Err
 }
 
 // Put updates key with value only if the version in the
@@ -52,5 +63,23 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Put(key, value string, version rpc.Tversion) rpc.Err {
 	// You will have to modify this function.
-	return rpc.ErrNoKey
+	reply := rpc.PutReply{}
+	ck.clnt.Call(ck.server, "KVServer.Put", &rpc.PutArgs{Key: key, Value: value, Version: version}, &reply)
+	if reply != (rpc.PutReply{}) {
+		return reply.Err
+	}
+	for {
+		ck.clnt.Call(ck.server, "KVServer.Put", &rpc.PutArgs{Key: key, Value: value, Version: version}, &reply)
+		if reply == (rpc.PutReply{}) {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if reply != (rpc.PutReply{}) {
+			break
+		}
+	}
+	if reply.Err == rpc.ErrVersion {
+		return rpc.ErrMaybe
+	}
+	return reply.Err
 }
