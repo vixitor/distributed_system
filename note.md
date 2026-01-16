@@ -1,0 +1,45 @@
+
+
+## Raft
+
+- 根据论文In Search of an Understandable Consensus Algorithm了解Raft，为了写6.5480的Raft lab详细读论文。
+
+### 摘要
+
+Raft可以生成一个和Paxos相同的结果而且比Paxos更好理解。Raft更适合做现实中要落地的系统，为了增加可理解性，Raft把共识机制拆成了好几点，有leader election， log replication 和 safety，它还减少了要考虑的状态。
+
+### Raft 算法
+
+先选一个leader，然后让leader处理replicated log， leader要接受用户的log entry然后把他们replicate给其他的服务器，还要告诉服务器什么时候把log entries应用到state machines上面去。这样做的好处是replicated log 的处理更加简单了，leader可以决定把entry放在log的什么位置，然后log只会从leader走向其他服务器，当一个leader失效的时候新的leader会被选举出来。Raft把共识分解成了三个部分，leader election， log replication，和 safety。
+
+#### 基础
+
+- 服务器有三种状态，leader， follower和candidate。通常情况下有一个leader然后其他服务器都是follower。follower自己不会发请求只回应leader和candicate的请求。leader处理所有用户的请求，如果用户联系了follower，follower会把请求重定向给leader，candidate用来选举一个新的leader。
+- Raft把时间分成任意长度的term，每个term都以一个选举开始，一个或者多个candidate希望成为leader。如果一个candidate在选举中获胜，那么在这个term他就是leader。在某些情况下会出现平票。这样的话这个term就会没有leader，一个新的term会马上开始。Raft保证了在一个term里只会有最多一个leader。
+- 不同的server在不同的时间观察到term的变化，在某些情况下一些server可能不会观察到election或者一整个term。term像一个逻辑时间一样，让服务器发掘一些过时的信息，比如过时的leader。每个server存一个current term。在服务器之间通信的时候current term交换了，如果一个服务器的current 比别人小，他会更新到更大的值。如果一个leader或者candidate发现他的term过时了，就会立刻变成follower。如果server收到了一个过时的term，就会拒绝相应的请求。
+- server之间用RPC通信，基础的共识只用两种RPC，requestVote和AppendEntries。requestVote是candidate用来拉票的，AppendEntries是leader用来replicate log entries和提供heartbeat的。heartbeat是一种特殊的Appendentries
+
+#### Leader election
+
+- Raft用一种心跳机制来开启leader election。当服务器启动的时候都是follower，只要服务器从leader或者candidate收到有效的RPC他就会保持follower的状态。leader会向follower定期发送heartbeat来保持authority。当一个follower在一段时间内没有收到通信（这段时间被叫做 election time out），他就会认为没有合法的leader，开始election来选一个新leader。
+
+- follower增加自己的current term然后变成candidate来开启election，他会给自己投票然后并行的给其他每个服务器发请求，直到三个事情中的一个发生 1 他在选举中胜出 2 其他服务器成为了leader 3 一段时间过去了没有获胜者
+
+- candidate如果获得大部分在相同term的服务器的支持就可以获胜。每个服务器都只能给最多一个candidate投票，谁先发消息就投给谁。大部分服务器同意的设定确保了只有最多一个服务器可以成为leader。当candidate获胜了，他就要给其他人发heartbeat来确定authority同时防止新的election发生。在safety中又给投票添加了一个条件。只有在一个服务器的log里面包含所有确认的entries的时候他才能被选为leader。这就意味着这个candidate的log 必须至少和别的服务器的log一样新，对于新的定义，如果两个log的term不一样那么term大的新，如果term一样那么长度长的新。
+
+- 在等待vote的时候candidate可能会收到Appendentries，说他是新的leader，如果这个leader的term大于等于current term，那么candidate就相信这个leader是真的，自己重新变回follower。否则就拒绝这个appendentries继续candidate状态
+
+- 第三种情况是很多个服务器都成为了candidate，投票很分散没有人成为leader这种情况下会timeout然后增加current term重新开始新的一轮election，但是如果没有额外的办法的话，平票会一直发生。
+
+- Raft采用了随机的election timeout，这样平票就很少而且会很快被解决。为了防止平票timeout一般在150ms-300ms之间，这样在大多数情况下就只会有一个server timeout，这种机制也解决了平票问题。
+
+  
+
+
+
+
+
+
+
+ 
+
