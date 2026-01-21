@@ -2,7 +2,7 @@
 
 set -u
 
-iterations="${1:-1000}"
+iterations="${1:-3000}"
 jobs="${2:-${JOBS:-}}"
 
 if [[ -z "$jobs" ]]; then
