@@ -154,12 +154,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
 		return
 	}
+	rf.resetElectionTimeout()
 	if args.Term == rf.currentTerm {
+		reply.Term = rf.currentTerm
 		if rf.voteFor == -1 {
 			rf.voteFor = args.CandidateId
 			rf.state = Follower
@@ -177,15 +179,21 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) RequestAppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	reply.Term = rf.currentTerm
-	if args.Term >= rf.currentTerm {
+	if args.Term > rf.currentTerm {
 		rf.state = Follower
 		rf.voteFor = -1
 		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
 		reply.Success = true
 		rf.resetElectionTimeout()
 	} else if args.Term < rf.currentTerm {
 		reply.Success = false
+		reply.Term = rf.currentTerm
+	} else {
+		rf.state = Follower
+		reply.Success = true
+		reply.Term = rf.currentTerm
+		rf.resetElectionTimeout()
 	}
 }
 
@@ -295,6 +303,7 @@ func (rf *Raft) startElection() {
 	rf.state = Candidate
 	rf.voteFor = rf.me
 	rf.currentTerm += 1
+	startTerm := rf.currentTerm
 	rf.resetElectionTimeout()
 	args := RequestVoteArgs{Term: rf.currentTerm, CandidateId: rf.me}
 	rf.mu.Unlock()
@@ -311,12 +320,14 @@ func (rf *Raft) startElection() {
 				rf.currentTerm = reply.Term
 				rf.voteFor = -1
 				rf.state = Follower
+				rf.mu.Unlock()
+				return
 			}
 			if rf.state != Candidate {
 				rf.mu.Unlock()
 				return
 			}
-			if reply.VoteGranted == true {
+			if reply.VoteGranted == true && startTerm == rf.currentTerm {
 				voteCnt += 1
 			}
 			if voteCnt > len(rf.peers)/2 && rf.state == Candidate {
