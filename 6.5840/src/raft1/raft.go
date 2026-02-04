@@ -225,8 +225,8 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	reply.Term = rf.currentTerm
 	if args.PrevLogIndex > rf.lastLogIndex() {
 		reply.Success = false
-		reply.XIndex = rf.lastLogIndex()
-		reply.XTerm = -1
+		reply.XIndex = rf.lastLogIndex() + 1
+		reply.Term = -1
 		// log.Println("different")
 		return
 	}
@@ -352,11 +352,7 @@ func (rf *Raft) replicateTo(server int) {
 			break
 		}
 		if reply.Success == false {
-			if reply.XTerm == rf.currentTerm {
-				rf.nextIndex[server] -= 1
-			} else {
-				rf.nextIndex[server] = reply.XIndex
-			}
+			rf.nextIndex[server] = reply.XIndex
 			// fmt.Printf("leader : %v server %v\n", rf.me, server)
 			// fmt.Println("nextIndex--")
 			// if rf.nextIndex[server] <= 1 {
@@ -479,6 +475,10 @@ func (rf *Raft) startElection() {
 			var reply RequestVoteReply
 			rf.sendRequestVote(server, &args, &reply)
 			rf.mu.Lock()
+			if startTerm != rf.currentTerm {
+				rf.mu.Unlock()
+				return
+			}
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.voteFor = -1
