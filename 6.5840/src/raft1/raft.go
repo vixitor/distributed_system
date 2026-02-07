@@ -186,7 +186,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.LastLogTerm < rf.log[rf.lastLogIndex()].Term || (args.LastLogTerm == rf.log[rf.lastLogIndex()].Term && args.LastLogIndex < rf.lastLogIndex()) {
 		reply.VoteGranted = false
-		rf.currentTerm = max(rf.currentTerm, args.Term)
+		if rf.currentTerm < args.Term {
+			rf.currentTerm = args.Term
+			rf.voteFor = -1
+			rf.state = Follower
+		}
 		reply.Term = rf.currentTerm
 
 		return
@@ -217,10 +221,12 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 		reply.Term = rf.currentTerm
 		return
 	}
+	if args.Term > rf.currentTerm {
+		rf.voteFor = -1
+	}
 	rf.currentTerm = args.Term
 	rf.resetElectionTimeout()
 	rf.state = Follower
-	rf.voteFor = -1
 	reply.Term = rf.currentTerm
 	if args.PrevLogIndex > rf.lastLogIndex() {
 		reply.Success = false
