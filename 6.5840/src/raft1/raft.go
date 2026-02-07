@@ -213,7 +213,6 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
-		// fmt.Printf("server %v term %v\n", rf.me, rf.currentTerm)
 		reply.Success = false
 		reply.Term = rf.currentTerm
 		return
@@ -227,21 +226,18 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 		reply.Success = false
 		reply.XIndex = rf.lastLogIndex() + 1
 		reply.XTerm = -1
-		// log.Println("different")
 		return
 	}
-	// log.Printf("prevLogIndex %v args %v\n", rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
 		reply.XTerm = rf.log[args.PrevLogIndex].Term
 		for index := args.PrevLogIndex; index > 0; index -= 1 {
-			if rf.log[index-1].Term == reply.Term {
+			if rf.log[index-1].Term == reply.XTerm {
 				continue
 			}
 			reply.XIndex = index
 			break
 		}
-		// log.Println("different")
 		return
 	}
 	reply.Success = true
@@ -316,7 +312,6 @@ func (rf *Raft) updateCommit() {
 				count += 1
 			}
 		}
-		// log.Printf("undateCommit: %v\n", count)
 		if count > len(rf.peers)/2 {
 			rf.commitIndex = index
 			rf.applyCond.Signal()
@@ -331,36 +326,31 @@ func (rf *Raft) replicateTo(server int) {
 	nextIndex := rf.nextIndex[server]
 	commitIndex := rf.commitIndex
 	rf.mu.Unlock()
-	for {
+	for rf.killed() == false {
 		rf.mu.Lock()
 		var args AppendEntriesArgs
 		args.Term = rf.currentTerm
 		args.LeaderId = rf.me
 		args.PrevLogIndex = nextIndex - 1
-		// log.Printf("len of nextIndex : %v\n", len(rf.nextIndex))
 		args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-		// log.Printf("args.PrevLogTerm %v\n", args.PrevLogTerm)
 		args.Entries = rf.log[nextIndex:]
 		args.LeaderCommit = commitIndex
 		rf.mu.Unlock()
 		var reply AppendEntriesReply
 		ok := rf.sendRequestAppendEntries(server, &args, &reply)
 		rf.mu.Lock()
+		if !ok {
+			rf.mu.Unlock()
+			break
+		}
 		if rf.currentTerm != startTerm {
 			rf.mu.Unlock()
 			break
 		}
-
-		// fmt.Printf("replyTerm %v rfCurrentTerm %v\n", reply.Term, rf.currentTerm)
 		if reply.Term > rf.currentTerm {
-			// fmt.Println("break")
 			rf.currentTerm = reply.Term
 			rf.state = Follower
 			rf.voteFor = -1
-			rf.mu.Unlock()
-			break
-		}
-		if !ok {
 			rf.mu.Unlock()
 			break
 		}
@@ -382,7 +372,10 @@ func (rf *Raft) applier() {
 	for {
 		rf.mu.Lock()
 		rf.applyCond.Wait()
-		// log.Printf("doing applier\n")
+		if rf.killed() {
+			rf.mu.Unlock()
+			break
+		}
 		if rf.commitIndex <= rf.lastApplied {
 			rf.mu.Unlock()
 			continue
@@ -536,8 +529,6 @@ func (rf *Raft) ticker() {
 			continue
 		}
 		rf.mu.Unlock()
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
@@ -565,7 +556,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.voteFor = -1
 	rf.state = Follower
 	rf.log = make([]LogEntry, 1)
-	// log.Printf("inital len : %v\n", len(rf.log))
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.applyCond = sync.NewCond(&rf.mu)
