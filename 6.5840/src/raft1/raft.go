@@ -226,7 +226,7 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 	if args.PrevLogIndex > rf.lastLogIndex() {
 		reply.Success = false
 		reply.XIndex = rf.lastLogIndex() + 1
-		reply.Term = -1
+		reply.XTerm = -1
 		// log.Println("different")
 		return
 	}
@@ -245,14 +245,23 @@ func (rf *Raft) RequestAppendEntries(args *AppendEntriesArgs, reply *AppendEntri
 		return
 	}
 	reply.Success = true
-	rf.log = rf.log[:args.PrevLogIndex+1]
-	rf.log = append(rf.log, args.Entries...)
+	for i := range args.Entries {
+		if i+args.PrevLogIndex+1 > rf.lastLogIndex() {
+			rf.log = append(rf.log, args.Entries[i])
+		} else {
+			if rf.log[i+args.PrevLogIndex+1] == args.Entries[i] {
+				continue
+			} else {
+				rf.log = rf.log[:i+args.PrevLogIndex+1]
+				rf.log = append(rf.log, args.Entries[i:]...)
+				break
+			}
+		}
+	}
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = args.LeaderCommit
-		rf.applyCond.Signal()
-	} else {
-		rf.commitIndex = args.LeaderCommit
 	}
+	rf.applyCond.Signal()
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -299,6 +308,9 @@ func (rf *Raft) updateCommit() {
 	rf.mu.Lock()
 	for index := rf.lastLogIndex(); index > rf.commitIndex; index -= 1 {
 		count := 0
+		if rf.log[index].Term != rf.currentTerm {
+			continue
+		}
 		for i := range rf.peers {
 			if rf.matchIndex[i] >= index {
 				count += 1
@@ -307,7 +319,6 @@ func (rf *Raft) updateCommit() {
 		// log.Printf("undateCommit: %v\n", count)
 		if count > len(rf.peers)/2 {
 			rf.commitIndex = index
-			// log.Println("signal")
 			rf.applyCond.Signal()
 			break
 		}
@@ -317,18 +328,20 @@ func (rf *Raft) updateCommit() {
 func (rf *Raft) replicateTo(server int) {
 	rf.mu.Lock()
 	startTerm := rf.currentTerm
+	nextIndex := rf.nextIndex[server]
+	commitIndex := rf.commitIndex
 	rf.mu.Unlock()
 	for {
 		rf.mu.Lock()
 		var args AppendEntriesArgs
 		args.Term = rf.currentTerm
 		args.LeaderId = rf.me
-		args.PrevLogIndex = rf.nextIndex[server] - 1
+		args.PrevLogIndex = nextIndex - 1
 		// log.Printf("len of nextIndex : %v\n", len(rf.nextIndex))
 		args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
 		// log.Printf("args.PrevLogTerm %v\n", args.PrevLogTerm)
-		args.Entries = rf.log[rf.nextIndex[server]:]
-		args.LeaderCommit = rf.commitIndex
+		args.Entries = rf.log[nextIndex:]
+		args.LeaderCommit = commitIndex
 		rf.mu.Unlock()
 		var reply AppendEntriesReply
 		ok := rf.sendRequestAppendEntries(server, &args, &reply)
@@ -352,17 +365,12 @@ func (rf *Raft) replicateTo(server int) {
 			break
 		}
 		if reply.Success == false {
-			rf.nextIndex[server] = reply.XIndex
-			// fmt.Printf("leader : %v server %v\n", rf.me, server)
-			// fmt.Println("nextIndex--")
-			// if rf.nextIndex[server] <= 1 {
-			// 	log.Printf("nextIndex %v\n", rf.nextIndex[server])
-			// }
+			nextIndex = reply.XIndex
 			rf.mu.Unlock()
 			continue
 		} else {
-			rf.nextIndex[server] = rf.lastLogIndex() + 1
-			rf.matchIndex[server] = rf.lastLogIndex()
+			rf.nextIndex[server] = max(nextIndex+len(args.Entries), rf.nextIndex[server])
+			rf.matchIndex[server] = max(nextIndex+len(args.Entries)-1, rf.matchIndex[server])
 			rf.mu.Unlock()
 			rf.updateCommit()
 			break
@@ -386,7 +394,6 @@ func (rf *Raft) applier() {
 		rf.lastApplied = rf.commitIndex
 		rf.mu.Unlock()
 	}
-
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
