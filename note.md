@@ -55,6 +55,24 @@ Raft可以生成一个和Paxos相同的结果而且比Paxos更好理解。Raft�
 - 用这个机制，leader不用在当选的时候采取特别的行动来恢复log一致性。他只要开始正常操作然后log就会自动为了应对appendentries的一致性检查保持一致。leader永远不会修改或者删除自己log里面的entries。
 - 这种log复制机制展现了我们想要的共识特性：只要大部分server是可以用的，raft就可以接受，复制，操作新的log entries。在正常情况下一个新的entries会在一轮rpc中被复制到大部分server，单一的慢的follower不会影响表现。
 
+Log compaction 
+
+log在不断变长，但是在实际操作中太长的log会占用太多的空间并且导致需要很长的时间做replay。需要有一个机制来丢弃累计的多余的log。
+
+快照（snapshot）是最简单的做压缩的办法，把整个系统的状态写进稳定的内存里面，然后把到快照之前的所有log都丢弃。
+
+每一个server自己做快照，只包含自己的提交的entry。主要的工作就是状态机把自己的状态写到快照里。raft还把last included index和last included entry放到快照里。他们是为了支持快照之后的第一个appendentry 的 check。在快照完成之后，server就删除last included index之前的所有log。
+
+leader必须偶尔发快照给落后的follower。这只发生在leader要发给follower的entry已经被丢弃的时候，现实中这个情况不太可能发生，一个跟上leader的follower会已经有这个entry了。
+
+leader用一个新的installsnapshot rpc来把快照传给太落后的follower。通常这个快照包含在接受者log中没有的信息，所以follower会丢弃整个log，因为这种情况下他直接被快照取代了并且可能有和快照冲突的uncommitted entry。如果follower收到了一个log 前缀的快照，快照覆盖的log 被删除但是之后的log依旧有效必须被保留。
+
+有两个影响快照表现的因素，第一个是什么时候快照。简单的策略是当log到一个固定长度的时候快照一下。如果这个size比预期的快照的大小大很多，那快照的磁盘带宽开销会很小。
+
+第二个问题是写一个快照要很多时间，我们不希望这个操作拖延正常操作。解决方案是copy-on-write技术，这样新的更新可以在不影响快照写的情况下更新。比如有功能性数据结构的状态机通常支持这个。另外操作系统的copy-on-write支持可以用来创建一个在内存中的整个状态机的快照。
+
+
+
 
 
 
